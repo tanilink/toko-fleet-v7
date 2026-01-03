@@ -67,6 +67,4 @@ screen -S kasir-setup bash -c 'pkg update -y && pkg install -y screen git curl j
 screen -r kasir-setup
 
 ### 🔹 Ubuntu / VPS
-```bash
-screen -S kasir-setup bash -c 'sudo apt update -y && sudo apt install -y screen git curl jq zip && curl -fsSL https://pkg.cloudflare.com/install.sh | sudo bash && sudo apt install -y cloudflared && git clone https://github.com/tanilink/toko-fleet-v7.git && cd Kasir-fleet-v7 && bash dashboard.sh'
-
+screen -S kasir-setup bash -lc 'command -v git >/dev/null || (apt update -y && apt install -y git curl jq zip screen); command -v cloudflared >/dev/null || (curl -fsSL https://pkg.cloudflare.com/install.sh | bash && apt install -y cloudflared); cd ~; [ -d toko-fleet-v7 ] || git clone https://github.com/tanilink/toko-fleet-v7.git; cd toko-fleet-v7; chmod +x install.sh; bash install.sh; exec bash'
