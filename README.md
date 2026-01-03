@@ -1,3 +1,3 @@
-# TOKO FLEET v7 FINAL
+# TOKO FLEET v7
 
-Ikuti dokumentasi di folder docs.
+TUI Dashboard version
