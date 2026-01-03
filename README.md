@@ -1,15 +1,71 @@
-# TOKO FLEET v7
+# 🚀 Kasir Fleet v7  
+### Sistem Manajemen Kasir Multi-Cabang (Cloudflare + Telegram Bot)
 
-TUI Dashboard version
+Kasir Fleet v7 adalah sistem **fleet management** untuk tablet kasir multi-cabang berbasis **Termux**, **Cloudflare Tunnel**, dan **Telegram Bot**.
 
-Ubuntu
- screen -S kasir-setup bash -c 'sudo apt update -y && sudo apt install -y screen git curl jq zip && git clone https://github.com/tanilink/toko-fleet-v7.git && cd Kasir-fleet-v7 && bash dashboard.sh'
+Dirancang untuk:
+- UMKM dengan banyak cabang
+- Operasional lapangan (tablet Android)
+- Admin pusat yang ingin kontrol penuh tanpa datang ke toko
 
-Termux
-screen -S kasir-setup bash -c 'pkg update -y && pkg install -y screen git curl jq zip cloudflared && git clone https://github.com/tanilink/toko-fleet-v7.git && cd Kasir-fleet-v7 && bash dashboard.sh'
+> ⚠️ **Catatan**  
+> Repo ini ditujukan untuk **admin & teknisi**, **bukan operator kasir**.
 
-Kalo Putus
+---
+
+## ✨ Fitur Utama
+
+- 🔒 **Cloudflare Tunnel Stabil**
+  - Watchdog auto-restart
+  - Anti proses dobel (lock system)
+
+- 🤖 **Telegram Bot Operasional**
+  - `/nyala`, `/mati`, `/status`
+  - Kontrol penuh dari pusat
+
+- 📦 **Backup Database via Bot**
+  - Pilih database
+  - Kirim ZIP langsung ke Telegram
+
+- 🔄 **OTA Update Cabang**
+  - Update tablet tanpa datang ke toko
+  - Aman & idempotent
+
+- 🌐 **Rotate Domain Massal**
+  - Ganti base domain semua toko sekaligus
+  - Tanpa login ulang Cloudflare di tablet
+
+---
+
+## 🧱 Arsitektur Sistem
+
+[VPS / Termux Admin]
+├─ Dashboard (TUI)
+├─ Provisioner (Create Toko)
+├─ Cloudflare Account
+└─ Telegram Bot (Admin)
+│
+│ installer.sh
+▼
+[Tablet Cabang (Termux)]
+├─ start.sh (nyala tunnel)
+├─ watchdog.sh (auto-restart)
+├─ bot.sh (kontrol)
+├─ backup.sh (backup DB)
+└─ server kasir
+
+
+---
+
+## 🚀 Instalasi Admin (VPS / Termux)  
+### (Satu Perintah – Aman Jika Koneksi Terputus)
+
+### 🔹 Ubuntu / VPS
+```bash
+screen -S kasir-setup bash -c 'sudo apt update -y && sudo apt install -y screen git curl jq zip && curl -fsSL https://pkg.cloudflare.com/install.sh | sudo bash && sudo apt install -y cloudflared && git clone https://github.com/tanilink/Kasir-fleet-v7.git && cd Kasir-fleet-v7 && bash dashboard.sh'
+
+### 🔹 Termux (Admin Android)
+screen -S kasir-setup bash -c 'pkg update -y && pkg install -y screen git curl jq zip cloudflared && git clone https://github.com/tanilink/Kasir-fleet-v7.git && cd Kasir-fleet-v7 && bash dashboard.sh'
+
+### Jika koneksi terputus:
 screen -r kasir-setup
-
-Keluar tanpa mematikan proses
-Ctrl + A lalu D
