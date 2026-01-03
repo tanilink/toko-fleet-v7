@@ -1,32 +1,76 @@
 #!/bin/bash
+set -e
 
-# Mendapatkan data toko dan domain dari file konfigurasi
-source ~/.toko/env
+# ==================================================
+# KASIR FLEET v7 - DOMAIN MANAGER (FINAL)
+# ROTATE BASE DOMAIN MASSAL
+# ==================================================
 
-# Fungsi untuk mengganti domain
-change_domain() {
-  echo "Mengganti domain menjadi $1"
-  FULL_DOMAIN="$TOKO_ID.$1"
-  cloudflared tunnel route dns "$TOKO_ID" "$FULL_DOMAIN"
-  echo "Domain berhasil diganti: $FULL_DOMAIN"
+BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CFG_DIR="$BASE_DIR/config"
+DATA_DIR="$BASE_DIR/data"
+
+source "$CFG_DIR/global.env"
+
+REGISTRY="$DATA_DIR/registry.csv"
+
+[ ! -f "$REGISTRY" ] && {
+  echo "❌ registry.csv tidak ditemukan"
+  exit 1
 }
 
-# Fungsi untuk menambah domain ke daftar domain
-add_domain_to_list() {
-  DOMAIN="$1"
-  echo "$DOMAIN" >> ~/.toko/config/domains.list
-  echo "Domain $DOMAIN berhasil ditambahkan ke daftar."
-}
+CMD="$1"
+NEW_DOMAIN="$2"
 
-# Menambahkan opsi untuk mengganti atau menambah domain
-case "$1" in
-  change)
-    change_domain "$2"
-    ;;
-  add)
-    add_domain_to_list "$2"
-    ;;
-  *)
-    echo "Perintah tidak valid. Gunakan 'change' untuk mengganti domain atau 'add' untuk menambah domain."
-    ;;
+case "$CMD" in
+switch)
+  [ -z "$NEW_DOMAIN" ] && {
+    echo "❌ Base domain baru wajib diisi"
+    exit 1
+  }
+
+  echo "=============================================="
+  echo " ROTATE DOMAIN MASSAL"
+  echo "=============================================="
+  echo " Domain lama : $BASE_DOMAIN"
+  echo " Domain baru : $NEW_DOMAIN"
+  echo "=============================================="
+  echo
+
+  read -rp "LANJUTKAN? (y/N): " yn
+  [[ "$yn" =~ ^[Yy]$ ]] || exit 0
+
+  while IFS=',' read -r TOKO_ID OLD_DOMAIN CREATED; do
+    [[ "$TOKO_ID" == \#* ]] && continue
+    [ -z "$TOKO_ID" ] && continue
+
+    SUBDOMAIN="${TOKO_ID}"
+    NEW_FQDN="$SUBDOMAIN.$NEW_DOMAIN"
+
+    echo "▶ Update: $NEW_FQDN"
+
+    # Hapus route lama (jika ada)
+    cloudflared tunnel route dns "$TOKO_ID" "$NEW_FQDN" \
+      2>/dev/null || true
+  done < "$REGISTRY"
+
+  # Update registry domain
+  sed -i "s/\\.$BASE_DOMAIN/.$NEW_DOMAIN/g" "$REGISTRY"
+
+  # Update global config
+  sed -i "s/^BASE_DOMAIN=.*/BASE_DOMAIN=$NEW_DOMAIN/" "$CFG_DIR/global.env"
+
+  echo
+  echo "✔ ROTATE DOMAIN SELESAI"
+  echo "✔ Semua toko sekarang pakai .$NEW_DOMAIN"
+  echo
+  ;;
+list)
+  column -t -s',' "$REGISTRY"
+  ;;
+*)
+  echo "Usage:"
+  echo "  domain_manager.sh switch domain-baru.com"
+  echo "  domain_manager.sh list"
+  ;;
 esac
