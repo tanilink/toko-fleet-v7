@@ -1,103 +1,93 @@
 #!/bin/bash
 set -e
 
-clear
-echo "===================================================="
-echo "        KASIR FLEET v7 - MASTER INSTALLER"
-echo "===================================================="
+echo "==============================================="
+echo " KASIR FLEET v7 - MASTER INSTALLER"
+echo "==============================================="
 echo
 
-# ---------- CHECK ROOT ----------
-if [ "$EUID" -ne 0 ]; then
-  echo "❌ Installer harus dijalankan sebagai root"
-  echo "Gunakan: sudo bash install.sh"
+# ---------- CEK SCREEN ----------
+if [ -z "$STY" ]; then
+  echo "⚠️  Installer HARUS dijalankan di dalam screen"
+  echo
+  echo "Gunakan perintah:"
+  echo "  screen -S kasir-setup"
+  echo "  lalu jalankan:"
+  echo "  bash install.sh"
+  echo
   exit 1
 fi
 
-# ---------- BASE DIR ----------
-BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-LIB_DIR="$BASE_DIR/lib"
-CFG_DIR="$BASE_DIR/config"
-DATA_DIR="$BASE_DIR/data"
+echo "✔ Screen session terdeteksi"
 
-# ---------- OS CHECK ----------
-if ! command -v apt >/dev/null; then
-  echo "❌ Installer ini khusus VPS Linux (Ubuntu/Debian)"
+# ---------- OS DETECTION ----------
+if command -v apt >/dev/null 2>&1; then
+  OS="ubuntu"
+elif command -v pkg >/dev/null 2>&1; then
+  OS="termux"
+else
+  echo "❌ OS tidak dikenali"
   exit 1
 fi
 
-# ---------- DEPENDENCY ----------
-echo "[1/6] Install dependency sistem..."
-apt update -y
-apt install -y \
-  curl \
-  wget \
-  jq \
-  git \
-  unzip \
-  whiptail \
-  procps
+echo "✔ OS terdeteksi: $OS"
+echo
 
-# ---------- CLOUDFLARED ----------
-echo "[2/6] Install cloudflared..."
-if ! command -v cloudflared >/dev/null; then
-  wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-  dpkg -i cloudflared-linux-amd64.deb
+# ---------- INSTALL DEPENDENCY ----------
+echo "▶ Install dependency..."
+if [ "$OS" = "ubuntu" ]; then
+  sudo apt update -y
+  sudo apt install -y git curl jq zip screen
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    curl -fsSL https://pkg.cloudflare.com/install.sh | sudo bash
+    sudo apt install -y cloudflared
+  fi
+else
+  pkg update -y
+  pkg install -y git curl jq zip screen cloudflared
+fi
+echo "✔ Dependency selesai"
+echo
+
+# ---------- CLONE / UPDATE REPO ----------
+REPO_DIR="$HOME/toko-fleet-v7"
+
+if [ -d "$REPO_DIR/.git" ]; then
+  echo "▶ Repo sudah ada, update..."
+  cd "$REPO_DIR"
+  git pull
+else
+  echo "▶ Clone repo Kasir Fleet v7..."
+  cd "$HOME"
+  git clone https://github.com/tanilink/toko-fleet-v7.git
+  cd "$REPO_DIR"
 fi
 
-# ---------- FOLDER STRUCTURE ----------
-echo "[3/6] Setup struktur folder..."
-mkdir -p "$LIB_DIR" "$CFG_DIR" "$DATA_DIR"
-
-# ---------- GLOBAL CONFIG ----------
-if [ ! -f "$CFG_DIR/global.env" ]; then
-  cat <<EOF > "$CFG_DIR/global.env"
-BASE_DOMAIN=kasiron.my.id
-EOF
-  echo "✔ global.env dibuat"
-fi
-
-# ---------- ADMIN CONFIG ----------
-if [ ! -f "$CFG_DIR/admin.env" ]; then
-  cat <<EOF > "$CFG_DIR/admin.env"
-BOT_TOKEN=
-CHAT_ID=
-EOF
-  echo "✔ admin.env dibuat"
-fi
-
-# ---------- REGISTRY ----------
-if [ ! -f "$DATA_DIR/registry.csv" ]; then
-  echo "#toko_id,subdomain,created_at" > "$DATA_DIR/registry.csv"
-  echo "✔ registry.csv dibuat"
-fi
+echo "✔ Repo siap"
+echo
 
 # ---------- PERMISSION ----------
-echo "[4/6] Set permission script..."
-chmod +x "$BASE_DIR/dashboard.sh"
-chmod +x "$LIB_DIR"/*.sh
+chmod +x dashboard.sh
+chmod +x lib/*.sh
 
-# ---------- CLOUDFLARE LOGIN ----------
-echo "[5/6] Cek login Cloudflare..."
-if [ ! -f "$HOME/.cloudflared/cert.pem" ]; then
-  echo
-  echo "🔐 Login Cloudflare diperlukan (sekali saja)"
-  echo "Browser akan terbuka, silakan login."
-  echo
-  cloudflared tunnel login
-else
-  echo "✔ Cloudflare sudah login"
+# ---------- ALIAS ----------
+if ! grep -q "alias admin22=" ~/.bashrc; then
+  echo "alias admin22='cd ~/toko-fleet-v7 && bash dashboard.sh'" >> ~/.bashrc
+  echo "✔ Alias admin22 dibuat"
 fi
 
-# ---------- FINISH ----------
-echo "[6/6] Instalasi selesai"
+# ---------- FINAL ----------
 echo
-echo "===================================================="
-echo " INSTALL BERHASIL"
-echo "===================================================="
+echo "==============================================="
+echo " INSTALL SELESAI"
+echo "==============================================="
 echo
-echo "Menjalankan dashboard..."
-sleep 1
+echo "➡️  Jalankan dashboard dengan:"
+echo "    admin22"
+echo
+echo "📌 Jangan tutup screen!"
+echo "📌 Detach: Ctrl+A lalu D"
+echo
 
-cd "$BASE_DIR"
-./dashboard.sh
+# ---------- JALANKAN DASHBOARD ----------
+exec bash dashboard.sh
