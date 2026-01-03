@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+# ==================================================
+# KASIR FLEET v7 - MASTER PROVISIONER (FINAL)
+# ==================================================
+
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CFG_DIR="$BASE_DIR/config"
 DATA_DIR="$BASE_DIR/data"
@@ -11,11 +15,13 @@ source "$CFG_DIR/admin.env"
 
 mkdir -p "$INSTALLER_DIR"
 
+# ------------------ UTIL ------------------
 slugify() {
   echo "$1" | tr '[:upper:]' '[:lower:]' \
   | sed 's/[^a-z0-9]/-/g;s/--*/-/g;s/^-//;s/-$//'
 }
 
+# ------------------ COMMAND ------------------
 CMD="$1"
 
 case "$CMD" in
@@ -36,17 +42,21 @@ create)
   echo "▶ TOKO   : $TOKO_ID"
   echo "▶ DOMAIN : $FULL_DOMAIN"
 
-  # Tunnel Cloudflare
+  # ---------- CLOUDFLARE ----------
   if ! cloudflared tunnel list | grep -q "$TOKO_ID"; then
     cloudflared tunnel create "$TOKO_ID"
   fi
   cloudflared tunnel route dns "$TOKO_ID" "$FULL_DOMAIN" 2>/dev/null || true
 
+  # ---------- REGISTRY ----------
   grep -q "^$TOKO_ID," "$DATA_DIR/registry.csv" \
     || echo "$TOKO_ID,$FULL_DOMAIN,$(date +%F)" >> "$DATA_DIR/registry.csv"
 
   INSTALLER="$INSTALLER_DIR/$TOKO_ID.sh"
 
+# ==================================================
+# =============== INSTALLER CABANG =================
+# ==================================================
 cat <<EOF > "$INSTALLER"
 #!/bin/bash
 set -e
@@ -62,10 +72,11 @@ echo "=============================================="
 sleep 1
 
 command -v pkg >/dev/null || {
-  echo "❌ Jalankan di TERMUX"
+  echo "❌ Jalankan di TERMUX Android"
   exit 1
 }
 
+# ------------------ ENV ------------------
 PORT=7575
 TOKO_ID="$TOKO_ID"
 BOT_TOKEN="$BOT_TOKEN"
@@ -84,6 +95,7 @@ BASE_DOMAIN="$BASE_DOMAIN"
 FULL_DOMAIN="$FULL_DOMAIN"
 ENV
 
+# ------------------ DEP ------------------
 pkg update -y
 pkg install -y cloudflared jq curl zip termux-api procps netcat-openbsd
 termux-wake-lock
@@ -91,7 +103,7 @@ termux-setup-storage
 
 [ ! -f ~/.cloudflared/cert.pem ] && cloudflared tunnel login
 
-# ---------- START ----------
+# ------------------ START ------------------
 cat <<'START' > ~/.toko/start.sh
 #!/bin/bash
 source ~/.toko/env
@@ -113,7 +125,7 @@ sleep 2
 rm -f "\$LOCK"
 START
 
-# ---------- STOP ----------
+# ------------------ STOP ------------------
 cat <<'STOP' > ~/.toko/stop.sh
 #!/bin/bash
 source ~/.toko/env
@@ -128,7 +140,7 @@ pkill -f "cloudflared tunnel run.*\$TOKO_ID" 2>/dev/null || true
 echo "[\$(date)] STOP" >> "\$LOG"
 STOP
 
-# ---------- WATCHDOG ----------
+# ------------------ WATCHDOG ------------------
 cat <<'DOG' > ~/.toko/watchdog.sh
 #!/bin/bash
 source ~/.toko/env
@@ -143,11 +155,78 @@ while true; do
 done
 DOG
 
-# ---------- BOT ----------
-cat <<'BOT' > ~/.toko/bot.sh
+# ------------------ BACKUP ------------------
+cat <<'BACKUP' > ~/.toko/backup.sh
 #!/bin/bash
 source ~/.toko/env
 
+LOCK="\$HOME/.toko/lock"
+BASE="/storage/emulated/0/KasirToko/database"
+LOG="\$HOME/.toko/logs/daily.log"
+
+send() {
+  curl -s -X POST "https://api.telegram.org/bot\$BOT_TOKEN/sendMessage" \
+    -d chat_id="\$CHAT_ID" -d text="\$1" >/dev/null
+}
+
+send_file() {
+  curl -s -X POST "https://api.telegram.org/bot\$BOT_TOKEN/sendDocument" \
+    -F chat_id="\$CHAT_ID" \
+    -F document=@\"\$1\" >/dev/null
+}
+
+[ -f "\$LOCK" ] && send "⏳ Proses lain berjalan" && exit 0
+touch "\$LOCK"
+trap "rm -f \$LOCK" EXIT
+
+[ ! -d "\$BASE" ] && send "❌ Folder database tidak ada" && exit 1
+
+DBS=(\$(ls -1 "\$BASE"))
+[ "\${#DBS[@]}" -eq 0 ] && send "❌ Tidak ada database" && exit 1
+
+MSG="📦 PILIH DATABASE:\n"
+for i in "\${!DBS[@]}"; do
+  MSG+="\n\$((i+1)). \${DBS[\$i]}"
+done
+MSG+="\n\nBalas dengan angka"
+
+send "\$MSG"
+
+OFFSET_FILE="\$HOME/.toko/backup.offset"
+OFFSET=\$(cat "\$OFFSET_FILE" 2>/dev/null || echo 0)
+
+while true; do
+  UPD=\$(curl -s "https://api.telegram.org/bot\$BOT_TOKEN/getUpdates?offset=\$OFFSET")
+  echo "\$UPD" | jq -c '.result[]?' | while read -r r; do
+    UID=\$(echo "\$r" | jq -r '.update_id')
+    TXT=\$(echo "\$r" | jq -r '.message.text // empty')
+    CID=\$(echo "\$r" | jq -r '.message.chat.id // empty')
+    OFFSET=\$((UID+1))
+    echo "\$OFFSET" > "\$OFFSET_FILE"
+
+    [ "\$CID" != "\$CHAT_ID" ] && continue
+
+    if [[ "\$TXT" =~ ^[0-9]+$ ]] && [ "\$TXT" -ge 1 ] && [ "\$TXT" -le "\${#DBS[@]}" ]; then
+      DB="\${DBS[\$((TXT-1))]}"
+      ZIP="/sdcard/backup_\${DB}_\$(date +%Y%m%d_%H%M%S).zip"
+      cd "\$BASE/\$DB"
+      zip -r "\$ZIP" . >/dev/null
+      send_file "\$ZIP"
+      rm -f "\$ZIP"
+      echo "[\$(date)] BACKUP \$DB" >> "\$LOG"
+      exit 0
+    else
+      send "❌ Pilihan tidak valid"
+    fi
+  done
+  sleep 2
+done
+BACKUP
+
+# ------------------ BOT ------------------
+cat <<'BOT' > ~/.toko/bot.sh
+#!/bin/bash
+source ~/.toko/env
 LOCK="\$HOME/.toko/lock"
 LOG="\$HOME/.toko/logs/daily.log"
 OFFSET_FILE="\$HOME/.toko/bot.offset"
@@ -166,22 +245,22 @@ handle() {
   case "\$1" in
     /nyala)
       [ -f "\$LOCK" ] && send "⏳ Proses lain berjalan" && return
-      send "▶ Menyalakan..."
-      bash ~/.toko/start.sh
-      send "✅ ONLINE"
+      bash ~/.toko/start.sh && send "✅ ONLINE"
       ;;
     /mati)
       [ -f "\$LOCK" ] && send "⏳ Proses lain berjalan" && return
-      bash ~/.toko/stop.sh
-      send "⛔ OFFLINE"
+      bash ~/.toko/stop.sh && send "⛔ OFFLINE"
       ;;
     /status)
       pgrep -f "cloudflared tunnel run.*\$TOKO_ID" >/dev/null \
         && ST="ONLINE" || ST="OFFLINE"
       send "📊 \$TOKO_ID\nStatus: \$ST\nBattery: \$(battery)%"
       ;;
+    /backup)
+      bash ~/.toko/backup.sh &
+      ;;
     /help|*)
-      send "/nyala /mati /status"
+      send "/nyala /mati /status /backup"
       ;;
   esac
 }
@@ -219,7 +298,7 @@ echo "SELESAI"
 EOF
 
   chmod +x "$INSTALLER"
-  echo "✔ Installer dibuat: $INSTALLER"
+  echo "✔ Installer cabang dibuat: $INSTALLER"
   ;;
 
 list)
