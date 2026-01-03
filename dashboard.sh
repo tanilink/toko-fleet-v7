@@ -2,169 +2,113 @@
 set -e
 
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-LIB_DIR="$BASE_DIR/lib"
 CFG_DIR="$BASE_DIR/config"
+LIB_DIR="$BASE_DIR/lib"
 DATA_DIR="$BASE_DIR/data"
 
-# Load config jika ada
-[ -f "$CFG_DIR/global.env" ] && source "$CFG_DIR/global.env"
-[ -f "$CFG_DIR/admin.env" ] && source "$CFG_DIR/admin.env"
+GLOBAL_ENV="$CFG_DIR/global.env"
+ADMIN_ENV="$CFG_DIR/admin.env"
+REGISTRY="$DATA_DIR/registry.csv"
 
-# Default
-BASE_DOMAIN="${BASE_DOMAIN:-kasiron.my.id}"
+mkdir -p "$CFG_DIR" "$DATA_DIR"
 
-# ---------- UI HELPER ----------
-pause() {
-  read -rp "Tekan ENTER untuk kembali..."
-}
+# ---------- LOAD CONFIG ----------
+[ -f "$GLOBAL_ENV" ] && source "$GLOBAL_ENV"
+[ -f "$ADMIN_ENV" ] && source "$ADMIN_ENV"
 
-header() {
-  clear
+clear
+banner() {
   echo "===================================================="
   echo "        KASIR FLEET v7 - MASTER DASHBOARD"
   echo "===================================================="
-  echo " Base Domain : $BASE_DOMAIN"
-  echo " Bot Token   : ${BOT_TOKEN:+SET}${BOT_TOKEN:-BELUM}"
-  echo " Chat ID     : ${CHAT_ID:-BELUM}"
+  echo " Base Domain : ${BASE_DOMAIN:-BELUM DISET}"
+  echo " Bot Token   : ${BOT_TOKEN:+TERSET}${BOT_TOKEN:-BELUM}"
+  echo " Chat ID     : ${CHAT_ID:-BELUM DISET}"
   echo "===================================================="
   echo
 }
 
-confirm() {
-  read -rp "$1 (y/N): " yn
-  [[ "$yn" =~ ^[Yy]$ ]]
+pause() {
+  read -rp "Tekan ENTER untuk lanjut..."
 }
 
-# ---------- MENU FUNCTIONS ----------
-
-menu_set_bot() {
-  while true; do
-    header
-    echo "[01] Set / Ganti Bot Token"
-    echo "[02] Set / Ganti Chat ID"
-    echo "[03] Hapus Konfigurasi Bot"
-    echo "[04] Test Kirim Pesan Bot"
-    echo "[05] Restart Bot Service"
-    echo "[00] Kembali"
-    echo
-    read -rp "Pilih menu: " c
-
-    case "$c" in
-      1)
-        read -rp "Masukkan BOT TOKEN: " BOT_TOKEN
-        sed -i "s|^BOT_TOKEN=.*|BOT_TOKEN=$BOT_TOKEN|" "$CFG_DIR/admin.env"
-        echo "✔ Bot token disimpan"
-        pause
-        ;;
-      2)
-        read -rp "Masukkan CHAT ID ADMIN: " CHAT_ID
-        sed -i "s|^CHAT_ID=.*|CHAT_ID=$CHAT_ID|" "$CFG_DIR/admin.env"
-        echo "✔ Chat ID disimpan"
-        pause
-        ;;
-      3)
-        confirm "Yakin hapus konfigurasi bot?" && {
-          sed -i "s|^BOT_TOKEN=.*|BOT_TOKEN=|" "$CFG_DIR/admin.env"
-          sed -i "s|^CHAT_ID=.*|CHAT_ID=|" "$CFG_DIR/admin.env"
-          echo "✔ Konfigurasi bot dihapus"
-        }
-        pause
-        ;;
-      4)
-        bash "$LIB_DIR/bot_manager.sh" test
-        pause
-        ;;
-      5)
-        bash "$LIB_DIR/bot_manager.sh" restart
-        pause
-        ;;
-      0) return ;;
-    esac
-  done
-}
-
-menu_create_toko() {
-  header
-  read -rp "Nama Toko   : " NAMA
-  read -rp "Lokasi Toko : " LOKASI
-
-  bash "$LIB_DIR/provision.sh" create "$NAMA" "$LOKASI" "$BASE_DOMAIN"
-  pause
-}
-
-menu_list_toko() {
-  header
-  if [ ! -s "$DATA_DIR/registry.csv" ]; then
-    echo "Belum ada toko terdaftar."
+need_admin_env() {
+  if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+    echo "❌ Bot pusat BELUM dikonfigurasi"
+    echo "➡️  Silakan set BOT TOKEN & CHAT ID terlebih dahulu"
     pause
-    return
+    return 1
   fi
-
-  echo "DAFTAR TOKO:"
-  echo "---------------------------------------------"
-  column -t -s',' "$DATA_DIR/registry.csv"
-  echo "---------------------------------------------"
-  pause
+  return 0
 }
 
-menu_operasional() {
-  header
-  echo "[01] Kirim Status Semua Toko"
-  echo "[02] Backup Toko (via Bot)"
-  echo "[03] Kirim Summary Manual"
-  echo "[00] Kembali"
-  echo
-  read -rp "Pilih menu: " c
-
-  case "$c" in
-    1) bash "$LIB_DIR/bot_manager.sh" status ;;
-    2) bash "$LIB_DIR/bot_manager.sh" backup ;;
-    3) bash "$LIB_DIR/bot_manager.sh" summary ;;
-  esac
-  pause
-}
-
-menu_health() {
-  header
-  bash "$LIB_DIR/health_check.sh"
-  pause
-}
-
-menu_domain_switch() {
-  header
-  echo "Base domain saat ini : $BASE_DOMAIN"
-  echo
-  read -rp "Masukkan BASE DOMAIN BARU: " NEW_DOMAIN
-
-  confirm "Ganti SEMUA toko ke $NEW_DOMAIN ?" && {
-    bash "$LIB_DIR/domain_manager.sh" switch "$NEW_DOMAIN"
-    sed -i "s|^BASE_DOMAIN=.*|BASE_DOMAIN=$NEW_DOMAIN|" "$CFG_DIR/global.env"
-    BASE_DOMAIN="$NEW_DOMAIN"
-    echo "✔ Base domain berhasil diganti"
-  }
-  pause
-}
-
-# ---------- MAIN LOOP ----------
+# ---------- MENU LOOP ----------
 while true; do
-  header
-  echo "[01] Set Bot Telegram"
-  echo "[02] Create Toko / Installer"
-  echo "[03] Daftar Toko"
-  echo "[04] Operasional (via Bot)"
-  echo "[05] Health Check"
-  echo "[06] Ganti Base Domain Global"
-  echo "[00] Exit"
+  banner
+  echo "[01] Set / Ganti Bot Token (BOT PUSAT)"
+  echo "[02] Set / Ganti Chat ID (BOT PUSAT)"
+  echo "[03] Test Kirim Pesan Bot PUSAT"
+  echo "[04] Create Installer Toko (WAJIB)"
+  echo "[05] Lihat Daftar Toko"
+  echo "[06] Rotate Base Domain Massal"
+  echo "[00] Keluar"
   echo
-  read -rp "Pilih menu: " menu
+  read -rp "Pilih menu: " MENU
+  echo
 
-  case "$menu" in
-    1) menu_set_bot ;;
-    2) menu_create_toko ;;
-    3) menu_list_toko ;;
-    4) menu_operasional ;;
-    5) menu_health ;;
-    6) menu_domain_switch ;;
-    0) clear; exit 0 ;;
+  case "$MENU" in
+  01)
+    read -rp "Masukkan BOT TOKEN Telegram: " BOT_TOKEN
+    mkdir -p "$CFG_DIR"
+    sed -i '/^BOT_TOKEN=/d' "$ADMIN_ENV" 2>/dev/null || true
+    echo "BOT_TOKEN=$BOT_TOKEN" >> "$ADMIN_ENV"
+    echo "✔ Bot Token disimpan"
+    pause
+    ;;
+  02)
+    read -rp "Masukkan CHAT ID Admin: " CHAT_ID
+    mkdir -p "$CFG_DIR"
+    sed -i '/^CHAT_ID=/d' "$ADMIN_ENV" 2>/dev/null || true
+    echo "CHAT_ID=$CHAT_ID" >> "$ADMIN_ENV"
+    echo "✔ Chat ID disimpan"
+    pause
+    ;;
+  03)
+    need_admin_env || continue
+    bash "$LIB_DIR/bot_manager.sh" test
+    pause
+    ;;
+  04)
+    need_admin_env || continue
+    read -rp "Nama Toko   : " NAMA
+    read -rp "Lokasi Toko : " LOKASI
+    echo
+    bash "$LIB_DIR/provision.sh" create "$NAMA" "$LOKASI"
+    pause
+    ;;
+  05)
+    if [ ! -f "$REGISTRY" ]; then
+      echo "Belum ada toko terdaftar"
+    else
+      echo "DAFTAR TOKO:"
+      echo "----------------------------------"
+      column -t -s',' "$REGISTRY"
+    fi
+    pause
+    ;;
+  06)
+    read -rp "Masukkan BASE DOMAIN BARU: " NEWDOM
+    [ -z "$NEWDOM" ] && continue
+    bash "$LIB_DIR/domain_manager.sh" switch "$NEWDOM"
+    pause
+    ;;
+  00)
+    echo "Keluar dashboard."
+    exit 0
+    ;;
+  *)
+    echo "Menu tidak valid"
+    pause
+    ;;
   esac
 done
