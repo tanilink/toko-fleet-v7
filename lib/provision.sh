@@ -14,33 +14,31 @@ mkdir -p "$INSTALLER_DIR"
 # ---------- UTIL ----------
 slugify() {
   echo "$1" | tr '[:upper:]' '[:lower:]' \
-    | sed 's/[^a-z0-9]/-/g;s/--*/-/g;s/^-//;s/-$//'
+  | sed 's/[^a-z0-9]/-/g;s/--*/-/g;s/^-//;s/-$//'
 }
 
-# ---------- COMMAND ----------
 CMD="$1"
 
 case "$CMD" in
   create)
-    NAMA_TOKO="$2"
+    NAMA="$2"
     LOKASI="$3"
     BASE_DOMAIN_INPUT="$4"
 
-    if [ -z "$NAMA_TOKO" ] || [ -z "$LOKASI" ]; then
-      echo "❌ Nama toko & lokasi wajib diisi"
+    [ -z "$NAMA" ] || [ -z "$LOKASI" ] && {
+      echo "❌ Nama toko & lokasi wajib"
       exit 1
-    fi
+    }
 
     BASE_DOMAIN="${BASE_DOMAIN_INPUT:-$BASE_DOMAIN}"
 
-    SUBDOMAIN="$(slugify "$NAMA_TOKO")-$(slugify "$LOKASI")"
-    TOKO_ID="$SUBDOMAIN"
-    FULL_DOMAIN="$SUBDOMAIN.$BASE_DOMAIN"
+    TOKO_ID="$(slugify "$NAMA")-$(slugify "$LOKASI")"
+    FULL_DOMAIN="$TOKO_ID.$BASE_DOMAIN"
 
-    echo "▶ Membuat toko: $TOKO_ID"
-    echo "▶ Domain       : $FULL_DOMAIN"
+    echo "▶ TOKO   : $TOKO_ID"
+    echo "▶ DOMAIN : $FULL_DOMAIN"
 
-    # ---------- CLOUDFARE TUNNEL ----------
+    # ---------- TUNNEL ----------
     if ! cloudflared tunnel list | grep -q "$TOKO_ID"; then
       cloudflared tunnel create "$TOKO_ID"
     fi
@@ -48,14 +46,13 @@ case "$CMD" in
     cloudflared tunnel route dns "$TOKO_ID" "$FULL_DOMAIN" 2>/dev/null || true
 
     # ---------- REGISTRY ----------
-    if ! grep -q "^$TOKO_ID," "$DATA_DIR/registry.csv"; then
-      echo "$TOKO_ID,$SUBDOMAIN,$(date +%F)" >> "$DATA_DIR/registry.csv"
-    fi
+    grep -q "^$TOKO_ID," "$DATA_DIR/registry.csv" \
+      || echo "$TOKO_ID,$FULL_DOMAIN,$(date +%F)" >> "$DATA_DIR/registry.csv"
 
-    # ---------- INSTALLER FILE ----------
-    INSTALLER_FILE="$INSTALLER_DIR/$TOKO_ID.sh"
+    INSTALLER="$INSTALLER_DIR/$TOKO_ID.sh"
 
-    cat <<EOF > "$INSTALLER_FILE"
+# ================= INSTALLER CABANG =================
+cat <<EOF > "$INSTALLER"
 #!/bin/bash
 set -e
 clear
@@ -63,22 +60,22 @@ clear
 echo "=============================================="
 echo "  KASIR FLEET v7 - INSTALLER CABANG"
 echo "=============================================="
-echo "  TOKO   : $NAMA_TOKO"
-echo "  LOKASI : $LOKASI"
+echo " TOKO   : $NAMA"
+echo " LOKASI : $LOKASI"
+echo " DOMAIN : $FULL_DOMAIN"
 echo "=============================================="
 sleep 1
 
-# ---------- CHECK TERMUX ----------
-if ! command -v pkg >/dev/null; then
-  echo "❌ Installer ini hanya untuk TERMUX Android"
+command -v pkg >/dev/null || {
+  echo "❌ Harus dijalankan di TERMUX"
   exit 1
-fi
+}
 
 # ---------- ENV ----------
 PORT=7575
 TOKO_ID="$TOKO_ID"
-CHAT_ID="$CHAT_ID"
 BOT_TOKEN="$BOT_TOKEN"
+CHAT_ID="$CHAT_ID"
 BASE_DOMAIN="$BASE_DOMAIN"
 FULL_DOMAIN="$FULL_DOMAIN"
 
@@ -88,66 +85,94 @@ mkdir -p ~/.toko/logs ~/.termux/boot ~/.shortcuts
 cat <<ENV > ~/.toko/env
 TOKO_ID="$TOKO_ID"
 PORT="$PORT"
-CHAT_ID="$CHAT_ID"
 BOT_TOKEN="$BOT_TOKEN"
+CHAT_ID="$CHAT_ID"
 BASE_DOMAIN="$BASE_DOMAIN"
 FULL_DOMAIN="$FULL_DOMAIN"
 ENV
 
-# ---------- DEPENDENCY ----------
-echo "[1/5] Install dependency..."
+# ---------- DEP ----------
 pkg update -y
 pkg install -y cloudflared jq curl zip termux-api procps netcat-openbsd
-
 termux-wake-lock
 termux-setup-storage
 sleep 1
 
-# ---------- CLOUDFLARE ----------
-echo "[2/5] Login Cloudflare (jika diminta)..."
-if [ ! -f ~/.cloudflared/cert.pem ]; then
-  cloudflared tunnel login
-fi
+# ---------- CF LOGIN ----------
+[ ! -f ~/.cloudflared/cert.pem ] && cloudflared tunnel login
 
-# ---------- SERVICE ----------
-cat <<'SERVICE' > ~/.toko/start.sh
+# ---------- START ----------
+cat <<'START' > ~/.toko/start.sh
 #!/bin/bash
 source ~/.toko/env
+LOCK="\$HOME/.toko/lock"
+LOG="\$HOME/.toko/logs/daily.log"
+
+[ -f "\$LOCK" ] && exit 0
+touch "\$LOCK"
+trap "rm -f \$LOCK" EXIT
 
 termux-wake-lock
-pkill -f cloudflared || true
+pkill -f "cloudflared tunnel run.*\$TOKO_ID" 2>/dev/null || true
+sleep 1
 
+echo "[\$(date)] START TUNNEL" >> "\$LOG"
 cloudflared tunnel run --url http://localhost:\$PORT "\$TOKO_ID" \
-  >/dev/null 2>&1 &
-SERVICE
+  >> "\$LOG" 2>&1 &
+sleep 2
+rm -f "\$LOCK"
+START
 
-chmod +x ~/.toko/start.sh
+# ---------- STOP ----------
+cat <<'STOP' > ~/.toko/stop.sh
+#!/bin/bash
+source ~/.toko/env
+LOCK="\$HOME/.toko/lock"
+LOG="\$HOME/.toko/logs/daily.log"
+
+[ -f "\$LOCK" ] && exit 0
+touch "\$LOCK"
+trap "rm -f \$LOCK" EXIT
+
+pkill -f "cloudflared tunnel run.*\$TOKO_ID" 2>/dev/null || true
+echo "[\$(date)] STOP TUNNEL" >> "\$LOG"
+STOP
+
+# ---------- WATCHDOG ----------
+cat <<'DOG' > ~/.toko/watchdog.sh
+#!/bin/bash
+source ~/.toko/env
+LOG="\$HOME/.toko/logs/daily.log"
+
+while true; do
+  if ! pgrep -f "cloudflared tunnel run.*\$TOKO_ID" >/dev/null; then
+    echo "[\$(date)] WATCHDOG: RESTART" >> "\$LOG"
+    bash ~/.toko/start.sh
+  fi
+  sleep 15
+done
+DOG
+
+chmod +x ~/.toko/*.sh
 ln -sf ~/.toko/start.sh ~/.termux/boot/start.sh
 ln -sf ~/.toko/start.sh ~/.shortcuts/Nyalakan_Server.sh
 
-# ---------- START ----------
-echo "[3/5] Menjalankan tunnel..."
+nohup ~/.toko/watchdog.sh >/dev/null 2>&1 &
 bash ~/.toko/start.sh
 
-# ---------- NOTIFY ----------
 curl -s -X POST "https://api.telegram.org/bot\$BOT_TOKEN/sendMessage" \
   -d chat_id="\$CHAT_ID" \
-  -d text="✅ TOKO ONLINE\nToko: $TOKO_ID\nDomain: $FULL_DOMAIN"
+  -d text="✅ TOKO ONLINE\n$TOKO_ID\nhttps://$FULL_DOMAIN"
 
-echo "[5/5] SELESAI"
-echo "Akses: https://$FULL_DOMAIN"
+echo "SELESAI. AKSES: https://$FULL_DOMAIN"
 EOF
+# ===================================================
 
-    chmod +x "$INSTALLER_FILE"
+    chmod +x "$INSTALLER"
 
     echo
-    echo "✔ INSTALLER BERHASIL DIBUAT"
-    echo "------------------------------------------"
-    echo "FILE : $INSTALLER_FILE"
-    echo
-    echo "Kirim ke operator:"
-    echo "  bash $TOKO_ID.sh"
-    echo "------------------------------------------"
+    echo "✔ INSTALLER CABANG DIBUAT"
+    echo "FILE: $INSTALLER"
     ;;
 
   list)
@@ -156,7 +181,7 @@ EOF
 
   *)
     echo "Usage:"
-    echo "  provision.sh create \"Nama Toko\" \"Lokasi\" [base_domain]"
+    echo "  provision.sh create \"Nama\" \"Lokasi\" [base_domain]"
     echo "  provision.sh list"
     ;;
 esac
