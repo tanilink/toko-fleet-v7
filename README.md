@@ -63,12 +63,14 @@ Dirancang untuk:
 ### 🔹 Termux (Admin Android)
 screen -S kasir-setup bash -c 'pkg update -y && pkg install -y screen git curl jq zip cloudflared && git clone https://github.com/tanilink/toko-fleet-v7.git && cd Kasir-fleet-v7 && bash dashboard.sh' 
 
+### Jika koneksi terputus:
+screen -r kasir-setup
+
 ### 🔹 Ubuntu / VPS
 ```bash
 screen -S kasir-setup bash -c 'sudo apt update -y && sudo apt install -y screen git curl jq zip && curl -fsSL https://pkg.cloudflare.com/install.sh | sudo bash && sudo apt install -y cloudflared && git clone https://github.com/tanilink/toko-fleet-v7.git && cd Kasir-fleet-v7 && bash dashboard.sh'
 
-### Jika koneksi terputus:
-screen -r kasir-setup
+
 
 
 
