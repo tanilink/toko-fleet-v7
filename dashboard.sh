@@ -10,6 +10,8 @@ GLOBAL_ENV="$CFG_DIR/global.env"
 ADMIN_ENV="$CFG_DIR/admin.env"
 REGISTRY="$DATA_DIR/registry.csv"
 
+CF_CERT="$HOME/.cloudflared/cert.pem"
+
 mkdir -p "$CFG_DIR" "$DATA_DIR"
 
 # ---------- LOAD CONFIG ----------
@@ -17,14 +19,32 @@ mkdir -p "$CFG_DIR" "$DATA_DIR"
 [ -f "$ADMIN_ENV" ] && source "$ADMIN_ENV"
 
 clear
+
+cf_status() {
+  if [ -f "$CF_CERT" ]; then
+    echo "OK"
+  else
+    echo "BELUM LOGIN"
+  fi
+}
+
 banner() {
   echo "===================================================="
   echo "        KASIR FLEET v7 - MASTER DASHBOARD"
   echo "===================================================="
   echo " Base Domain : ${BASE_DOMAIN:-BELUM DISET}"
+  echo " Cloudflare  : $(cf_status)"
   echo " Bot Token   : ${BOT_TOKEN:+TERSET}${BOT_TOKEN:-BELUM}"
   echo " Chat ID     : ${CHAT_ID:-BELUM DISET}"
   echo "===================================================="
+
+  if [ ! -f "$CF_CERT" ]; then
+    echo " ⚠️  PERINGATAN:"
+    echo "    Anda BELUM login Cloudflare."
+    echo "    Jalankan: cloudflared tunnel login"
+    echo "    (Wajib sebelum Create Toko)"
+    echo "----------------------------------------------------"
+  fi
   echo
 }
 
@@ -36,6 +56,17 @@ need_admin_env() {
   if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
     echo "❌ Bot pusat BELUM dikonfigurasi"
     echo "➡️  Silakan set BOT TOKEN & CHAT ID terlebih dahulu"
+    pause
+    return 1
+  fi
+  return 0
+}
+
+need_cf_login() {
+  if [ ! -f "$CF_CERT" ]; then
+    echo "❌ Cloudflare BELUM login"
+    echo "➡️  Jalankan dulu:"
+    echo "    cloudflared tunnel login"
     pause
     return 1
   fi
@@ -59,7 +90,6 @@ while true; do
   case "$MENU" in
   01)
     read -rp "Masukkan BOT TOKEN Telegram: " BOT_TOKEN
-    mkdir -p "$CFG_DIR"
     sed -i '/^BOT_TOKEN=/d' "$ADMIN_ENV" 2>/dev/null || true
     echo "BOT_TOKEN=$BOT_TOKEN" >> "$ADMIN_ENV"
     echo "✔ Bot Token disimpan"
@@ -67,7 +97,6 @@ while true; do
     ;;
   02)
     read -rp "Masukkan CHAT ID Admin: " CHAT_ID
-    mkdir -p "$CFG_DIR"
     sed -i '/^CHAT_ID=/d' "$ADMIN_ENV" 2>/dev/null || true
     echo "CHAT_ID=$CHAT_ID" >> "$ADMIN_ENV"
     echo "✔ Chat ID disimpan"
@@ -80,6 +109,7 @@ while true; do
     ;;
   04)
     need_admin_env || continue
+    need_cf_login || continue
     read -rp "Nama Toko   : " NAMA
     read -rp "Lokasi Toko : " LOKASI
     echo
@@ -97,6 +127,7 @@ while true; do
     pause
     ;;
   06)
+    need_cf_login || continue
     read -rp "Masukkan BASE DOMAIN BARU: " NEWDOM
     [ -z "$NEWDOM" ] && continue
     bash "$LIB_DIR/domain_manager.sh" switch "$NEWDOM"
