@@ -14,42 +14,36 @@ CF_CERT="$HOME/.cloudflared/cert.pem"
 
 mkdir -p "$CFG_DIR" "$DATA_DIR"
 
-# ---------- LOAD CONFIG ----------
 [ -f "$GLOBAL_ENV" ] && source "$GLOBAL_ENV"
 [ -f "$ADMIN_ENV" ] && source "$ADMIN_ENV"
 
-clear
+pause() {
+  read -rp "Tekan ENTER untuk lanjut..."
+}
 
-cf_status() {
-  if [ -f "$CF_CERT" ]; then
-    echo "OK"
-  else
-    echo "BELUM LOGIN"
+cf_login_flow() {
+  if [ ! -f "$CF_CERT" ]; then
+    echo
+    echo "⚠️  ANDA BELUM LOGIN CLOUDFLARE"
+    echo "------------------------------------"
+    echo " Tekan ENTER untuk login sekarang"
+    echo " Tekan Ctrl+C untuk batal"
+    echo "------------------------------------"
+    read
+    cloudflared tunnel login
   fi
 }
 
 banner() {
+  clear
   echo "===================================================="
   echo "        KASIR FLEET v7 - MASTER DASHBOARD"
   echo "===================================================="
   echo " Base Domain : ${BASE_DOMAIN:-BELUM DISET}"
-  echo " Cloudflare  : $(cf_status)"
+  echo " Cloudflare  : $([ -f "$CF_CERT" ] && echo OK || echo BELUM LOGIN)"
   echo " Bot Token   : ${BOT_TOKEN:+TERSET}${BOT_TOKEN:-BELUM}"
   echo " Chat ID     : ${CHAT_ID:-BELUM DISET}"
   echo "===================================================="
-
-  if [ ! -f "$CF_CERT" ]; then
-    echo " ⚠️  PERINGATAN:"
-    echo "    Anda BELUM login Cloudflare."
-    echo "    Jalankan: cloudflared tunnel login"
-    echo "    (Wajib sebelum Create Toko)"
-    echo "----------------------------------------------------"
-  fi
-  echo
-}
-
-pause() {
-  read -rp "Tekan ENTER untuk lanjut..."
 }
 
 need_admin_env() {
@@ -62,20 +56,13 @@ need_admin_env() {
   return 0
 }
 
-need_cf_login() {
-  if [ ! -f "$CF_CERT" ]; then
-    echo "❌ Cloudflare BELUM login"
-    echo "➡️  Jalankan dulu:"
-    echo "    cloudflared tunnel login"
-    pause
-    return 1
-  fi
-  return 0
-}
+# ---------- LOGIN CF SEBELUM MENU ----------
+cf_login_flow
 
 # ---------- MENU LOOP ----------
 while true; do
   banner
+  echo
   echo "[01] Set / Ganti Bot Token (BOT PUSAT)"
   echo "[02] Set / Ganti Chat ID (BOT PUSAT)"
   echo "[03] Test Kirim Pesan Bot PUSAT"
@@ -109,7 +96,6 @@ while true; do
     ;;
   04)
     need_admin_env || continue
-    need_cf_login || continue
     read -rp "Nama Toko   : " NAMA
     read -rp "Lokasi Toko : " LOKASI
     echo
@@ -127,7 +113,6 @@ while true; do
     pause
     ;;
   06)
-    need_cf_login || continue
     read -rp "Masukkan BASE DOMAIN BARU: " NEWDOM
     [ -z "$NEWDOM" ] && continue
     bash "$LIB_DIR/domain_manager.sh" switch "$NEWDOM"
