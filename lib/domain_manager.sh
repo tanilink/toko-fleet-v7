@@ -2,48 +2,82 @@
 set -e
 
 # ==================================================
-# Kasir Fleet v7 - Bot Manager (VPS / BOT PUSAT)
-# TIDAK PERNAH mengakses ~/.toko/
+# Kasir Fleet v7 - Domain Manager (MASTER / VPS)
+# Rotate base domain massal semua toko
 # ==================================================
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CFG_DIR="$BASE_DIR/config"
+DATA_DIR="$BASE_DIR/data"
 
-ADMIN_ENV="$CFG_DIR/admin.env"
+GLOBAL_ENV="$CFG_DIR/global.env"
+REGISTRY="$DATA_DIR/registry.csv"
 
-if [ ! -f "$ADMIN_ENV" ]; then
-  echo "❌ config/admin.env tidak ditemukan"
+CF_CERT="$HOME/.cloudflared/cert.pem"
+
+# ---------- LOAD CONFIG ----------
+[ -f "$GLOBAL_ENV" ] || {
+  echo "❌ config/global.env tidak ditemukan"
   exit 1
-fi
-
-source "$ADMIN_ENV"
-
-if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
-  echo "❌ BOT_TOKEN atau CHAT_ID belum diset"
-  exit 1
-fi
-
-send() {
-  local MSG="$1"
-  curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
-    -d chat_id="$CHAT_ID" \
-    -d text="$MSG" >/dev/null
 }
 
-case "$1" in
-test)
-  send "✅ TEST BOT BERHASIL
+source "$GLOBAL_ENV"
 
-Kasir Fleet v7
-Server: VPS / Master
-Tanggal: $(date)"
-  echo "✔ Pesan test terkirim ke Telegram"
-  ;;
-restart)
-  echo "ℹ️ Bot pusat tidak perlu direstart (stateless)"
-  ;;
-*)
+# ---------- VALIDASI ----------
+if [ ! -f "$CF_CERT" ]; then
+  echo "❌ Cloudflare belum login"
+  echo "➡️  Jalankan: cloudflared tunnel login"
+  exit 1
+fi
+
+if [ ! -f "$REGISTRY" ]; then
+  echo "❌ registry.csv belum ada (belum ada toko)"
+  exit 1
+fi
+
+ACTION="$1"
+NEW_DOMAIN="$2"
+
+if [ "$ACTION" != "switch" ] || [ -z "$NEW_DOMAIN" ]; then
   echo "Usage:"
-  echo "  bot_manager.sh test"
-  ;;
-esac
+  echo "  domain_manager.sh switch domain-baru.com"
+  exit 1
+fi
+
+OLD_DOMAIN="$BASE_DOMAIN"
+
+echo "==============================================="
+echo " ROTATE BASE DOMAIN MASSAL"
+echo "==============================================="
+echo " Domain lama : $OLD_DOMAIN"
+echo " Domain baru : $NEW_DOMAIN"
+echo
+
+read -rp "Lanjutkan? (y/N): " CONFIRM
+[ "$CONFIRM" != "y" ] && exit 0
+
+# ---------- UPDATE GLOBAL ENV ----------
+sed -i "s/^BASE_DOMAIN=.*/BASE_DOMAIN=$NEW_DOMAIN/" "$GLOBAL_ENV"
+
+# ---------- PROCESS REGISTRY ----------
+TMP_REGISTRY="$(mktemp)"
+
+while IFS=',' read -r TOKO_ID DOMAIN TGL; do
+  NEW_FQDN="$TOKO_ID.$NEW_DOMAIN"
+
+  echo "▶ Update DNS: $TOKO_ID → $NEW_FQDN"
+
+  # Route DNS ulang (idempotent)
+  cloudflared tunnel route dns "$TOKO_ID" "$NEW_FQDN" >/dev/null 2>&1 || true
+
+  echo "$TOKO_ID,$NEW_FQDN,$TGL" >> "$TMP_REGISTRY"
+done < "$REGISTRY"
+
+mv "$TMP_REGISTRY" "$REGISTRY"
+
+echo
+echo "✔ Semua toko berhasil dipindahkan ke domain baru"
+echo "✔ Tablet tidak perlu login ulang"
+echo "✔ Tunnel tetap aktif"
+echo
+echo "BASE_DOMAIN sekarang: $NEW_DOMAIN"
