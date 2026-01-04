@@ -1,312 +1,204 @@
 #!/bin/bash
 set -e
 
-# ==================================================
-# KASIR FLEET v7 - MASTER PROVISIONER (FINAL)
-# ==================================================
+# ====================================================
+# Kasir Fleet v7 - Provisioner (MASTER / VPS)
+# Create toko + kirim installer ke Telegram
+# ====================================================
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CFG_DIR="$BASE_DIR/config"
 DATA_DIR="$BASE_DIR/data"
 INSTALLER_DIR="$BASE_DIR/installers"
 
-source "$CFG_DIR/global.env"
-source "$CFG_DIR/admin.env"
+GLOBAL_ENV="$CFG_DIR/global.env"
+ADMIN_ENV="$CFG_DIR/admin.env"
+REGISTRY="$DATA_DIR/registry.csv"
 
-mkdir -p "$INSTALLER_DIR"
+mkdir -p "$DATA_DIR" "$INSTALLER_DIR"
 
-# ------------------ UTIL ------------------
+# ---------- LOAD CONFIG ----------
+[ -f "$GLOBAL_ENV" ] && source "$GLOBAL_ENV"
+[ -f "$ADMIN_ENV" ] && source "$ADMIN_ENV"
+
+# ---------- UTIL ----------
 slugify() {
   echo "$1" | tr '[:upper:]' '[:lower:]' \
-  | sed 's/[^a-z0-9]/-/g;s/--*/-/g;s/^-//;s/-$//'
+    | sed 's/[^a-z0-9]/-/g;s/--*/-/g;s/^-//;s/-$//'
 }
 
-# ------------------ COMMAND ------------------
-CMD="$1"
-
-case "$CMD" in
-create)
-  NAMA="$2"
-  LOKASI="$3"
-  BASE_DOMAIN_INPUT="$4"
-
-  [ -z "$NAMA" ] || [ -z "$LOKASI" ] && {
-    echo "❌ Nama toko & lokasi wajib"
+need_cf_login() {
+  if [ ! -f "$HOME/.cloudflared/cert.pem" ]; then
+    echo "❌ Cloudflare belum login"
+    echo "➡️  Jalankan: cloudflared tunnel login"
     exit 1
-  }
+  fi
+}
 
-  BASE_DOMAIN="${BASE_DOMAIN_INPUT:-$BASE_DOMAIN}"
+send_installer_telegram() {
+  local FILE="$1"
+  local TXT="$2"
+  local TOKO="$3"
+
+  if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+    echo "ℹ️ Bot pusat belum dikonfigurasi, skip kirim Telegram"
+    return 0
+  fi
+
+  echo "📤 Mengirim installer ke Telegram..."
+
+  curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
+    -d chat_id="$CHAT_ID" \
+    -d text="📦 INSTALLER TOKO SIAP\n\nToko: $TOKO\nTanggal: $(date)" >/dev/null
+
+  curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendDocument" \
+    -F chat_id="$CHAT_ID" \
+    -F document=@"$FILE" \
+    -F caption="Installer Kasir Fleet v7 - $TOKO" >/dev/null
+
+  curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendDocument" \
+    -F chat_id="$CHAT_ID" \
+    -F document=@"$TXT" \
+    -F caption="Petunjuk Install - $TOKO" >/dev/null
+
+  echo "✔ Installer & petunjuk terkirim ke Telegram"
+}
+
+# ---------- CREATE TOKO ----------
+create_toko() {
+  local NAMA="$1"
+  local LOKASI="$2"
+
+  if [ -z "$NAMA" ] || [ -z "$LOKASI" ]; then
+    echo "Usage:"
+    echo "  provision.sh create \"Nama Toko\" \"Lokasi\""
+    exit 1
+  fi
+
+  need_cf_login
+
   TOKO_ID="$(slugify "$NAMA")-$(slugify "$LOKASI")"
   FULL_DOMAIN="$TOKO_ID.$BASE_DOMAIN"
 
-  echo "▶ TOKO   : $TOKO_ID"
-  echo "▶ DOMAIN : $FULL_DOMAIN"
+  echo "▶ Membuat toko: $TOKO_ID"
+  echo "▶ Domain       : $FULL_DOMAIN"
+  echo
 
   # ---------- CLOUDFLARE ----------
   if ! cloudflared tunnel list | grep -q "$TOKO_ID"; then
     cloudflared tunnel create "$TOKO_ID"
   fi
-  cloudflared tunnel route dns "$TOKO_ID" "$FULL_DOMAIN" 2>/dev/null || true
+
+  cloudflared tunnel route dns "$TOKO_ID" "$FULL_DOMAIN" >/dev/null 2>&1 || true
 
   # ---------- REGISTRY ----------
-  grep -q "^$TOKO_ID," "$DATA_DIR/registry.csv" \
-    || echo "$TOKO_ID,$FULL_DOMAIN,$(date +%F)" >> "$DATA_DIR/registry.csv"
+  grep -q "^$TOKO_ID," "$REGISTRY" 2>/dev/null || \
+    echo "$TOKO_ID,$FULL_DOMAIN,$(date +%Y-%m-%d)" >> "$REGISTRY"
 
-  INSTALLER="$INSTALLER_DIR/$TOKO_ID.sh"
+  # ---------- INSTALLER SCRIPT ----------
+  INSTALLER_FILE="$INSTALLER_DIR/$TOKO_ID.sh"
+  TXT_FILE="$INSTALLER_DIR/$TOKO_ID.txt"
 
-# ==================================================
-# =============== INSTALLER CABANG =================
-# ==================================================
-cat <<EOF > "$INSTALLER"
+  cat > "$INSTALLER_FILE" <<EOF
 #!/bin/bash
+# ===============================================
+# Kasir Fleet v7 - Installer Cabang
+# Toko : $TOKO_ID
+# ===============================================
+
 set -e
-clear
 
-echo "=============================================="
-echo "  KASIR FLEET v7 - INSTALLER CABANG"
-echo "=============================================="
-echo " TOKO   : $NAMA"
-echo " LOKASI : $LOKASI"
-echo " DOMAIN : $FULL_DOMAIN"
-echo "=============================================="
-sleep 1
+echo "==============================================="
+echo " KASIR FLEET v7 - INSTALLER CABANG"
+echo " Toko : $TOKO_ID"
+echo "==============================================="
 
-command -v pkg >/dev/null || {
-  echo "❌ Jalankan di TERMUX Android"
-  exit 1
-}
-
-# ------------------ ENV ------------------
-PORT=7575
-TOKO_ID="$TOKO_ID"
-BOT_TOKEN="$BOT_TOKEN"
-CHAT_ID="$CHAT_ID"
-BASE_DOMAIN="$BASE_DOMAIN"
-FULL_DOMAIN="$FULL_DOMAIN"
-
-mkdir -p ~/.toko/logs ~/.termux/boot ~/.shortcuts
-
-cat <<ENV > ~/.toko/env
-TOKO_ID="$TOKO_ID"
-PORT="$PORT"
-BOT_TOKEN="$BOT_TOKEN"
-CHAT_ID="$CHAT_ID"
-BASE_DOMAIN="$BASE_DOMAIN"
-FULL_DOMAIN="$FULL_DOMAIN"
-ENV
-
-# ------------------ DEP ------------------
 pkg update -y
-pkg install -y cloudflared jq curl zip termux-api procps netcat-openbsd
+pkg install -y cloudflared curl jq zip termux-api procps netcat-openbsd
+
 termux-wake-lock
 termux-setup-storage
 
-[ ! -f ~/.cloudflared/cert.pem ] && cloudflared tunnel login
+mkdir -p ~/.toko/logs ~/.termux/boot
 
-# ------------------ START ------------------
-cat <<'START' > ~/.toko/start.sh
+cat > ~/.toko/env <<ENV
+TOKO_ID="$TOKO_ID"
+FULL_DOMAIN="$FULL_DOMAIN"
+BASE_DOMAIN="$BASE_DOMAIN"
+PORT=7575
+BOT_PRIMARY="$BOT_TOKEN"
+CHAT_ID="$CHAT_ID"
+ENV
+
+cat > ~/.toko/start.sh <<'EOS'
 #!/bin/bash
 source ~/.toko/env
-LOCK="\$HOME/.toko/lock"
-LOG="\$HOME/.toko/logs/daily.log"
-
-[ -f "\$LOCK" ] && exit 0
-touch "\$LOCK"
-trap "rm -f \$LOCK" EXIT
-
 termux-wake-lock
-pkill -f "cloudflared tunnel run.*\$TOKO_ID" 2>/dev/null || true
-sleep 1
+pkill -f cloudflared || true
+cloudflared tunnel run --url http://localhost:\$PORT "\$TOKO_ID" >/dev/null 2>&1 &
+EOS
 
-echo "[\$(date)] START" >> "\$LOG"
-cloudflared tunnel run --url http://localhost:\$PORT "\$TOKO_ID" \
-  >> "\$LOG" 2>&1 &
-sleep 2
-rm -f "\$LOCK"
-START
-
-# ------------------ STOP ------------------
-cat <<'STOP' > ~/.toko/stop.sh
+cat > ~/.toko/watchdog.sh <<'EOS'
 #!/bin/bash
 source ~/.toko/env
-LOCK="\$HOME/.toko/lock"
-LOG="\$HOME/.toko/logs/daily.log"
-
-[ -f "\$LOCK" ] && exit 0
-touch "\$LOCK"
-trap "rm -f \$LOCK" EXIT
-
-pkill -f "cloudflared tunnel run.*\$TOKO_ID" 2>/dev/null || true
-echo "[\$(date)] STOP" >> "\$LOG"
-STOP
-
-# ------------------ WATCHDOG ------------------
-cat <<'DOG' > ~/.toko/watchdog.sh
-#!/bin/bash
-source ~/.toko/env
-LOG="\$HOME/.toko/logs/daily.log"
-
 while true; do
-  if ! pgrep -f "cloudflared tunnel run.*\$TOKO_ID" >/dev/null; then
-    echo "[\$(date)] WATCHDOG RESTART" >> "\$LOG"
-    bash ~/.toko/start.sh
+  if ! pgrep cloudflared >/dev/null; then
+    cloudflared tunnel run --url http://localhost:\$PORT "\$TOKO_ID" >/dev/null 2>&1 &
   fi
-  sleep 15
+  sleep 10
 done
-DOG
-
-# ------------------ BACKUP ------------------
-cat <<'BACKUP' > ~/.toko/backup.sh
-#!/bin/bash
-source ~/.toko/env
-
-LOCK="\$HOME/.toko/lock"
-BASE="/storage/emulated/0/KasirToko/database"
-LOG="\$HOME/.toko/logs/daily.log"
-
-send() {
-  curl -s -X POST "https://api.telegram.org/bot\$BOT_TOKEN/sendMessage" \
-    -d chat_id="\$CHAT_ID" -d text="\$1" >/dev/null
-}
-
-send_file() {
-  curl -s -X POST "https://api.telegram.org/bot\$BOT_TOKEN/sendDocument" \
-    -F chat_id="\$CHAT_ID" \
-    -F document=@\"\$1\" >/dev/null
-}
-
-[ -f "\$LOCK" ] && send "⏳ Proses lain berjalan" && exit 0
-touch "\$LOCK"
-trap "rm -f \$LOCK" EXIT
-
-[ ! -d "\$BASE" ] && send "❌ Folder database tidak ada" && exit 1
-
-DBS=(\$(ls -1 "\$BASE"))
-[ "\${#DBS[@]}" -eq 0 ] && send "❌ Tidak ada database" && exit 1
-
-MSG="📦 PILIH DATABASE:\n"
-for i in "\${!DBS[@]}"; do
-  MSG+="\n\$((i+1)). \${DBS[\$i]}"
-done
-MSG+="\n\nBalas dengan angka"
-
-send "\$MSG"
-
-OFFSET_FILE="\$HOME/.toko/backup.offset"
-OFFSET=\$(cat "\$OFFSET_FILE" 2>/dev/null || echo 0)
-
-while true; do
-  UPD=\$(curl -s "https://api.telegram.org/bot\$BOT_TOKEN/getUpdates?offset=\$OFFSET")
-  echo "\$UPD" | jq -c '.result[]?' | while read -r r; do
-    UID=\$(echo "\$r" | jq -r '.update_id')
-    TXT=\$(echo "\$r" | jq -r '.message.text // empty')
-    CID=\$(echo "\$r" | jq -r '.message.chat.id // empty')
-    OFFSET=\$((UID+1))
-    echo "\$OFFSET" > "\$OFFSET_FILE"
-
-    [ "\$CID" != "\$CHAT_ID" ] && continue
-
-    if [[ "\$TXT" =~ ^[0-9]+$ ]] && [ "\$TXT" -ge 1 ] && [ "\$TXT" -le "\${#DBS[@]}" ]; then
-      DB="\${DBS[\$((TXT-1))]}"
-      ZIP="/sdcard/backup_\${DB}_\$(date +%Y%m%d_%H%M%S).zip"
-      cd "\$BASE/\$DB"
-      zip -r "\$ZIP" . >/dev/null
-      send_file "\$ZIP"
-      rm -f "\$ZIP"
-      echo "[\$(date)] BACKUP \$DB" >> "\$LOG"
-      exit 0
-    else
-      send "❌ Pilihan tidak valid"
-    fi
-  done
-  sleep 2
-done
-BACKUP
-
-# ------------------ BOT ------------------
-cat <<'BOT' > ~/.toko/bot.sh
-#!/bin/bash
-source ~/.toko/env
-LOCK="\$HOME/.toko/lock"
-LOG="\$HOME/.toko/logs/daily.log"
-OFFSET_FILE="\$HOME/.toko/bot.offset"
-API="https://api.telegram.org/bot\$BOT_TOKEN"
-
-send() {
-  curl -s -X POST "\$API/sendMessage" \
-    -d chat_id="\$CHAT_ID" -d text="\$1" >/dev/null
-}
-
-battery() {
-  termux-battery-status 2>/dev/null | jq -r '.percentage // "N/A"'
-}
-
-handle() {
-  case "\$1" in
-    /nyala)
-      [ -f "\$LOCK" ] && send "⏳ Proses lain berjalan" && return
-      bash ~/.toko/start.sh && send "✅ ONLINE"
-      ;;
-    /mati)
-      [ -f "\$LOCK" ] && send "⏳ Proses lain berjalan" && return
-      bash ~/.toko/stop.sh && send "⛔ OFFLINE"
-      ;;
-    /status)
-      pgrep -f "cloudflared tunnel run.*\$TOKO_ID" >/dev/null \
-        && ST="ONLINE" || ST="OFFLINE"
-      send "📊 \$TOKO_ID\nStatus: \$ST\nBattery: \$(battery)%"
-      ;;
-    /backup)
-      bash ~/.toko/backup.sh &
-      ;;
-    /help|*)
-      send "/nyala /mati /status /backup"
-      ;;
-  esac
-}
-
-OFFSET=\$(cat "\$OFFSET_FILE" 2>/dev/null || echo 0)
-
-while true; do
-  UPD=\$(curl -s "\$API/getUpdates?offset=\$OFFSET")
-  echo "\$UPD" | jq -c '.result[]?' | while read -r r; do
-    UID=\$(echo "\$r" | jq -r '.update_id')
-    MSG=\$(echo "\$r" | jq -r '.message.text // empty')
-    CID=\$(echo "\$r" | jq -r '.message.chat.id // empty')
-    OFFSET=\$((UID+1))
-    echo "\$OFFSET" > "\$OFFSET_FILE"
-    [ "\$CID" != "\$CHAT_ID" ] && continue
-    handle "\$MSG"
-  done
-  sleep 2
-done
-BOT
+EOS
 
 chmod +x ~/.toko/*.sh
 ln -sf ~/.toko/start.sh ~/.termux/boot/start.sh
-ln -sf ~/.toko/start.sh ~/.shortcuts/Nyalakan_Server.sh
 
 nohup ~/.toko/watchdog.sh >/dev/null 2>&1 &
-nohup ~/.toko/bot.sh >/dev/null 2>&1 &
-bash ~/.toko/start.sh
+nohup ~/.toko/start.sh >/dev/null 2>&1 &
 
-curl -s -X POST "https://api.telegram.org/bot\$BOT_TOKEN/sendMessage" \
-  -d chat_id="\$CHAT_ID" \
-  -d text="✅ TOKO ONLINE\n$TOKO_ID\nhttps://$FULL_DOMAIN"
-
-echo "SELESAI"
+echo "✔ INSTALL SELESAI - TOKO ONLINE"
 EOF
 
-  chmod +x "$INSTALLER"
-  echo "✔ Installer cabang dibuat: $INSTALLER"
-  ;;
+  chmod +x "$INSTALLER_FILE"
 
-list)
-  column -t -s',' "$DATA_DIR/registry.csv"
+  # ---------- PETUNJUK TXT ----------
+  cat > "$TXT_FILE" <<EOF
+PETUNJUK INSTALL KASIR FLEET v7
+====================================
+
+TOKO :
+$TOKO_ID
+
+LANGKAH INSTALL DI TABLET :
+
+1. Install Termux dari Play Store
+2. Buka Termux
+3. Jalankan perintah berikut:
+
+   bash $TOKO_ID.sh
+
+CATATAN :
+- Pastikan internet aktif
+- Jangan tutup Termux saat install
+- Setelah selesai, toko langsung ONLINE
+
+Jika ada kendala, hubungi admin pusat.
+EOF
+
+  echo "✔ Installer dibuat : $INSTALLER_FILE"
+  echo "✔ Petunjuk dibuat  : $TXT_FILE"
+  echo
+
+  send_installer_telegram "$INSTALLER_FILE" "$TXT_FILE" "$TOKO_ID"
+}
+
+# ---------- ENTRY ----------
+case "$1" in
+create)
+  shift
+  create_toko "$@"
   ;;
 *)
   echo "Usage:"
-  echo "  provision.sh create \"Nama\" \"Lokasi\""
-  echo "  provision.sh list"
+  echo "  provision.sh create \"Nama Toko\" \"Lokasi\""
   ;;
 esac
