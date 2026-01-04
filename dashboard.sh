@@ -1,130 +1,47 @@
 #!/bin/bash
 set -e
+BASE_DIR="/opt/kasir-fleet"
+ENV="$BASE_DIR/.env"
 
-BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-CFG_DIR="$BASE_DIR/config"
-LIB_DIR="$BASE_DIR/lib"
-DATA_DIR="$BASE_DIR/data"
+mkdir -p "$BASE_DIR/data"
 
-GLOBAL_ENV="$CFG_DIR/global.env"
-ADMIN_ENV="$CFG_DIR/admin.env"
-REGISTRY="$DATA_DIR/registry.csv"
+if [ ! -f "$ENV" ]; then
+cat > "$ENV" <<EOF
+BASE_DOMAIN=kasiron.my.id
+BOT_TOKEN=
+CHAT_ID=
+EOF
+fi
 
-CF_CERT="$HOME/.cloudflared/cert.pem"
+source "$ENV"
 
-mkdir -p "$CFG_DIR" "$DATA_DIR"
+clear
+echo "================================================="
+echo "        KASIR FLEET v7 - MASTER DASHBOARD"
+echo "================================================="
+echo " Base Domain : $BASE_DOMAIN"
+echo " Bot Token   : ${BOT_TOKEN:0:10}..."
+echo " Chat ID     : $CHAT_ID"
+echo "================================================="
+echo
+echo "[01] Login Cloudflare"
+echo "[02] Set Bot Token"
+echo "[03] Set Chat ID"
+echo "[04] Buat Toko Baru"
+echo "[05] Rotate Base Domain"
+echo "[06] Lihat Daftar Toko"
+echo "[00] Keluar"
+echo
+read -p "Pilih menu: " M
 
-[ -f "$GLOBAL_ENV" ] && source "$GLOBAL_ENV"
-[ -f "$ADMIN_ENV" ] && source "$ADMIN_ENV"
-
-pause() {
-  read -rp "Tekan ENTER untuk lanjut..."
-}
-
-cf_login_flow() {
-  if [ ! -f "$CF_CERT" ]; then
-    echo
-    echo "⚠️  ANDA BELUM LOGIN CLOUDFLARE"
-    echo "------------------------------------"
-    echo " Tekan ENTER untuk login sekarang"
-    echo " Tekan Ctrl+C untuk batal"
-    echo "------------------------------------"
-    read
-    cloudflared tunnel login
-  fi
-}
-
-banner() {
-  clear
-  echo "===================================================="
-  echo "        KASIR FLEET v7 - MASTER DASHBOARD"
-  echo "===================================================="
-  echo " Base Domain : ${BASE_DOMAIN:-BELUM DISET}"
-  echo " Cloudflare  : $([ -f "$CF_CERT" ] && echo OK || echo BELUM LOGIN)"
-  echo " Bot Token   : ${BOT_TOKEN:+TERSET}${BOT_TOKEN:-BELUM}"
-  echo " Chat ID     : ${CHAT_ID:-BELUM DISET}"
-  echo "===================================================="
-}
-
-need_admin_env() {
-  if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
-    echo "❌ Bot pusat BELUM dikonfigurasi"
-    echo "➡️  Silakan set BOT TOKEN & CHAT ID terlebih dahulu"
-    pause
-    return 1
-  fi
-  return 0
-}
-
-# ---------- LOGIN CF SEBELUM MENU ----------
-cf_login_flow
-
-# ---------- MENU LOOP ----------
-while true; do
-  banner
-  echo
-  echo "[01] Set / Ganti Bot Token (BOT PUSAT)"
-  echo "[02] Set / Ganti Chat ID (BOT PUSAT)"
-  echo "[03] Test Kirim Pesan Bot PUSAT"
-  echo "[04] Create Installer Toko (WAJIB)"
-  echo "[05] Lihat Daftar Toko"
-  echo "[06] Rotate Base Domain Massal"
-  echo "[00] Keluar"
-  echo
-  read -rp "Pilih menu: " MENU
-  echo
-
-  case "$MENU" in
-  01)
-    read -rp "Masukkan BOT TOKEN Telegram: " BOT_TOKEN
-    sed -i '/^BOT_TOKEN=/d' "$ADMIN_ENV" 2>/dev/null || true
-    echo "BOT_TOKEN=$BOT_TOKEN" >> "$ADMIN_ENV"
-    echo "✔ Bot Token disimpan"
-    pause
-    ;;
-  02)
-    read -rp "Masukkan CHAT ID Admin: " CHAT_ID
-    sed -i '/^CHAT_ID=/d' "$ADMIN_ENV" 2>/dev/null || true
-    echo "CHAT_ID=$CHAT_ID" >> "$ADMIN_ENV"
-    echo "✔ Chat ID disimpan"
-    pause
-    ;;
-  03)
-    need_admin_env || continue
-    bash "$LIB_DIR/bot_manager.sh" test
-    pause
-    ;;
-  04)
-    need_admin_env || continue
-    read -rp "Nama Toko   : " NAMA
-    read -rp "Lokasi Toko : " LOKASI
-    echo
-    bash "$LIB_DIR/provision.sh" create "$NAMA" "$LOKASI"
-    pause
-    ;;
-  05)
-    if [ ! -f "$REGISTRY" ]; then
-      echo "Belum ada toko terdaftar"
-    else
-      echo "DAFTAR TOKO:"
-      echo "----------------------------------"
-      column -t -s',' "$REGISTRY"
-    fi
-    pause
-    ;;
-  06)
-    read -rp "Masukkan BASE DOMAIN BARU: " NEWDOM
-    [ -z "$NEWDOM" ] && continue
-    bash "$LIB_DIR/domain_manager.sh" switch "$NEWDOM"
-    pause
-    ;;
-  00)
-    echo "Keluar dashboard."
-    exit 0
-    ;;
-  *)
-    echo "Menu tidak valid"
-    pause
-    ;;
-  esac
-done
+case $M in
+  1) cloudflared login ;;
+  2) read -p "Bot Token: " BOT_TOKEN
+     sed -i "s|^BOT_TOKEN=.*|BOT_TOKEN=$BOT_TOKEN|" "$ENV" ;;
+  3) read -p "Chat ID: " CHAT_ID
+     sed -i "s|^CHAT_ID=.*|CHAT_ID=$CHAT_ID|" "$ENV" ;;
+  4) bash lib/provision.sh ;;
+  5) bash lib/domain_manager.sh ;;
+  6) column -t -s, data/registry.csv ;;
+  0) exit ;;
+esac
